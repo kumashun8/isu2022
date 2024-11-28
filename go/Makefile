@@ -28,6 +28,7 @@ restart-mysql:
 	sudo rsync -av ../conf/mysql/ /etc/mysql/
 	sudo systemctl restart mysql.service
 	sudo systemctl status mysql.service | tail -n 5
+	../sql/alter.sh
 
 init.config:
 	mkdir -p ../conf
