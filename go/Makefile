@@ -12,7 +12,7 @@ ALP_REGEXP = '/api/sample/[0-9a-z\-]+'
 
 restart: $(BUILD_TARGET) log.rotate restart-mysql restart-app restart-nginx # set build target on top
 init: init.config init.asdf init.tools log.init
-survey: survey.slowlog survey.nginx
+survey: survey.mysql survey.sqlite survey.nginx
 
 restart-app:
 	rm -f /tmp/webapp.sock
@@ -52,9 +52,14 @@ init.tools:
 	asdf install alp `asdf list-all alp | tail -1`
 	asdf global alp `asdf list-all alp | tail -1`
 
-survey.slowlog:
+survey.mysql:
 	sudo pt-query-digest /var/log/mysql/mysql-slow.log | \
-	tee ../survey/slowlog/digest_`date +%Y%m%d%H%M%S`.txt
+	tee ../survey/mysql/digest_`date +%Y%m%d%H%M%S`.txt
+
+survey.sqlite:
+	sed -e '1i\[' -e '$$a\]' -e 's/$$/,/g' ../sql/slowlog_sqlite/log.json | sed -z 's/,\n\]/\n\]/g' | \
+	jq 'group_by(.statement) | map({"statement": .[0].statement, "count": [.[]]|length, "avg": ([.[].query_time]|add/length)}) | sort_by(.count) | reverse' | \
+	tee ../survey/sqlite/digest_`date +%Y%m%d%H%M%S`.json 
 
 # need to customize regexp
 survey.nginx:
@@ -68,13 +73,16 @@ log.init:
 	sudo chown mysql:mysql /var/log/mysql/mysql-slow.log
 	sudo touch /var/log/nginx/access.log
 	mkdir -p ../survey
-	mkdir -p ../survey/slowlog
+	mkdir -p ../survey/mysql
 	mkdir -p ../survey/nginx
+	mkdir -p ../survey/sqlite
 
 
 log.rotate:
 	sudo mv /var/log/mysql/mysql-slow.log /var/log/mysql/mysql-slow.log.`date +%Y%m%d%H%M%S`
 	sudo touch /var/log/mysql/mysql-slow.log
+	mv ../sql/slowlog_sqlite/log.json ../sql/slowlog_sqlite/log_`date +%Y%m%d%H%M%S`.json
+	touch ../sql/slowlog_sqlite/log.json
 	sudo chmod 666 /var/log/mysql/mysql-slow.log
 	sudo chown mysql:mysql /var/log/mysql/mysql-slow.log
 	sudo mv /var/log/nginx/access.log /var/log/nginx/access.log.`date +%Y%m%d%H%M%S`
@@ -96,6 +104,9 @@ config.git:
 
 tail.mysql:
 	sudo tail -f /var/log/mysql/mysql-slow.log
+
+tail.sqlite:
+	tail -f ../sql/slowlog_sqlite/log.json
 
 tail.nginx:
 	sudo tail -f /var/log/nginx/access.log
