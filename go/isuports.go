@@ -557,7 +557,7 @@ func billingReportByCompetition(ctx context.Context, tenantDB dbOrTx, tenantID i
 			if err != nil {
 				return nil, fmt.Errorf("error marshal to json: %w", err)
 			}
-			err = rdb.Set(ctx, key, _vhs, 10*time.Second).Err()
+			err = rdb.Set(ctx, key, _vhs, 60*time.Second).Err()
 			if err != nil {
 				return nil, fmt.Errorf("error redis set: %w", err)
 			}
