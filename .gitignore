@@ -2,3 +2,4 @@ sqlite-trace.log
 survey
 go/isuports
 tenant_db
+sql/slowlog_sqlite
