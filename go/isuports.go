@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -28,6 +29,7 @@ import (
 	"github.com/lestrrat-go/jwx/v2/jwa"
 	"github.com/lestrrat-go/jwx/v2/jwk"
 	"github.com/lestrrat-go/jwx/v2/jwt"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -530,17 +532,47 @@ func billingReportByCompetition(ctx context.Context, tenantDB dbOrTx, tenantID i
 		return nil, fmt.Errorf("error retrieveCompetition: %w", err)
 	}
 
-	// ランキングにアクセスした参加者のIDを取得する
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     "localhost:6379",
+		Password: "", // no password set
+		DB:       0,  // use default DB
+	})
 	vhs := []VisitHistorySummaryRow{}
-	if err := adminDB.SelectContext(
-		ctx,
-		&vhs,
-		"SELECT player_id, MIN(created_at) AS min_created_at FROM visit_history WHERE tenant_id = ? AND competition_id = ? GROUP BY player_id",
-		tenantID,
-		comp.ID,
-	); err != nil && err != sql.ErrNoRows {
-		return nil, fmt.Errorf("error Select visit_history: tenantID=%d, competitionID=%s, %w", tenantID, comp.ID, err)
+	key := fmt.Sprintf("rank:%d:%s", tenantID, competitonID)
+	val, err := rdb.Get(ctx, key).Result()
+	// RedisになければDBから取得する
+	if err == redis.Nil {
+		// ランキングにアクセスした参加者のIDを取得する
+		if err := adminDB.SelectContext(
+			ctx,
+			&vhs,
+			"SELECT player_id, MIN(created_at) AS min_created_at FROM visit_history WHERE tenant_id = ? AND competition_id = ? GROUP BY player_id",
+			tenantID,
+			comp.ID,
+		); err != nil && err != sql.ErrNoRows {
+			return nil, fmt.Errorf("error Select visit_history: tenantID=%d, competitionID=%s, %w", tenantID, comp.ID, err)
+		}
+		if vhs != nil {
+			_vhs, err := json.Marshal(vhs)
+			if err != nil {
+				return nil, fmt.Errorf("error marshal to json: %w", err)
+			}
+			err = rdb.Set(ctx, key, _vhs, 10*time.Second).Err()
+			if err != nil {
+				return nil, fmt.Errorf("error redis set: %w", err)
+			}
+			// fmt.Printf("set redis key: %s, value: %s\n", key, _vhs)
+		}
+	} else if err != nil {
+		return nil, fmt.Errorf("error redis get: %w", err)
+	} else {
+		// Redisにあればそこから取得する
+		err = json.Unmarshal([]byte(val), &vhs)
+		if err != nil {
+			return nil, fmt.Errorf("error unmarshal from json: %w, key: %s, val: %s", err, key, val)
+		}
 	}
+
 	billingMap := map[string]string{}
 	for _, vh := range vhs {
 		// competition.finished_atよりもあとの場合は、終了後に訪問したとみなして大会開催内アクセス済みとみなさない
